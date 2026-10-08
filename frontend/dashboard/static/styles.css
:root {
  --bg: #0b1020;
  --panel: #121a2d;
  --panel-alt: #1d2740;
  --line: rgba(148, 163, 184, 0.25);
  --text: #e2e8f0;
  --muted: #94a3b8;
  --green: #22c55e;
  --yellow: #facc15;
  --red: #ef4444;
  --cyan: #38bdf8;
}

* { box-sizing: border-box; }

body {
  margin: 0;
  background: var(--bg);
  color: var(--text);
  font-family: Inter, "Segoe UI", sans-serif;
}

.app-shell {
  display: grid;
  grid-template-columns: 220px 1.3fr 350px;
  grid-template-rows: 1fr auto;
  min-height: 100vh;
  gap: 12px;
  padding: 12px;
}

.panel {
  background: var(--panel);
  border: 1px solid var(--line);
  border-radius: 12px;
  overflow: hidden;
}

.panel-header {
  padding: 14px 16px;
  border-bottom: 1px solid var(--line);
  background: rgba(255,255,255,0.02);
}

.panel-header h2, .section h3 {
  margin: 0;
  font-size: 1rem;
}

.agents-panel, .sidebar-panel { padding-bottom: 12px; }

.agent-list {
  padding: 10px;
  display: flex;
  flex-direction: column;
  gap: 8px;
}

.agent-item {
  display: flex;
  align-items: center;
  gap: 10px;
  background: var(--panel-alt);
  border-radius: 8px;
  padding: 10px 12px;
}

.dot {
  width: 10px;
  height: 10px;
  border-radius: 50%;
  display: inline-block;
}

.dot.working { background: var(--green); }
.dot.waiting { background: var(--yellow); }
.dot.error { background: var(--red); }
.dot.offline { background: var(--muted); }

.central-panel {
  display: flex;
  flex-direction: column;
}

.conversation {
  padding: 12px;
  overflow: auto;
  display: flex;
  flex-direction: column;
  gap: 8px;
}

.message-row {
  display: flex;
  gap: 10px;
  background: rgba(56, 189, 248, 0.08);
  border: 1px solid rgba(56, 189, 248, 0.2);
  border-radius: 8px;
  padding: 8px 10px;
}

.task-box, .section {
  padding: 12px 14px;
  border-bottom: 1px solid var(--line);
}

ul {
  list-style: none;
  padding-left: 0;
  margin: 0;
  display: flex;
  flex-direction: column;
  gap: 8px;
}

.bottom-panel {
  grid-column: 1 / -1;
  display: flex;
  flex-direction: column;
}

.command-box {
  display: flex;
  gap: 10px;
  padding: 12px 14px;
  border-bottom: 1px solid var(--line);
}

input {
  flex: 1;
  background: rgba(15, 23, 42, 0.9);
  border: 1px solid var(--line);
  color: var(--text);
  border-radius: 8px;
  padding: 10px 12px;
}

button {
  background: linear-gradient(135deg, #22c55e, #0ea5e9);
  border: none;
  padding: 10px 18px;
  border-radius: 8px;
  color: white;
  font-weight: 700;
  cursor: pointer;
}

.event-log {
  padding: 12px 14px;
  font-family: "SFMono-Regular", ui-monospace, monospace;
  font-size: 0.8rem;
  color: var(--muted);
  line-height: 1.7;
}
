@@ -1,0 +1,130 @@
+const state = {
+  agents: [],
+  tasks: [],
+  messages: [],
+  logs: [],
+  benchmarks: [],
+};
+
+const el = {
+  agentList: document.getElementById("agent-list"),
+  conversation: document.getElementById("conversation"),
+  taskCurrent: document.getElementById("task-current"),
+  toolActivity: document.getElementById("tool-activity"),
+  errors: document.getElementById("errors"),
+  testResults: document.getElementById("test-results"),
+  eventLog: document.getElementById("event-log"),
+  commandInput: document.getElementById("moderator-command"),
+  sendButton: document.getElementById("send-command"),
+};
+
+function renderAgents() {
+  el.agentList.innerHTML = "";
+  state.agents.forEach((agent) => {
+    const item = document.createElement("div");
+    item.className = "agent-item";
+    item.innerHTML = `
+      <span class="dot ${agent.status}"></span>
+      <span>${agent.name}</span>
+    `;
+    el.agentList.appendChild(item);
+  });
+}
+
+function renderMessages() {
+  el.conversation.innerHTML = "";
+  state.messages.forEach((msg) => {
+    const row = document.createElement("div");
+    row.className = "message-row";
+    row.innerHTML = `<strong>${msg.agent}</strong><span>${msg.message}</span>`;
+    el.conversation.appendChild(row);
+  });
+}
+
+function renderTasks() {
+  if (!state.tasks.length) {
+    el.taskCurrent.innerHTML = "No active task.";
+    return;
+  }
+  const task = state.tasks[0];
+  el.taskCurrent.innerHTML = `
+    <p><strong>${task.title}</strong></p>
+    <p>${task.description}</p>
+    <p>Status: ${task.status}</p>
+    <p>Assigned: ${task.assigned_agent}</p>
+  `;
+}
+
+function renderLogs() {
+  el.toolActivity.innerHTML = "";
+  state.logs.slice(-8).forEach((entry) => {
+    const li = document.createElement("li");
+    li.textContent = `${entry.agent} -> ${entry.tool}`;
+    el.toolActivity.appendChild(li);
+  });
+
+  el.errors.innerHTML = "";
+  const taskErrors = state.tasks.filter((task) => task.errors && task.errors.length).flatMap((task) => task.errors);
+  taskErrors.forEach((err) => {
+    const li = document.createElement("li");
+    li.textContent = err;
+    el.errors.appendChild(li);
+  });
+
+  el.testResults.innerHTML = "";
+  state.benchmarks.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = `${item.name}: ${item.value}`;
+    el.testResults.appendChild(li);
+  });
+}
+
+function renderEvents() {
+  const events = [
+    "[10:31:02] Director started task",
+    "[10:31:05] Programmer created player.gd",
+    "[10:31:11] Level Designer created arena.tscn",
+    "[10:31:20] Tester started Godot",
+    "[10:31:23] Tester found error",
+    "[10:31:30] Programmer fixing error",
+    "[10:31:41] Tester PASS",
+  ];
+  el.eventLog.innerHTML = events.map((ev) => `<div>${ev}</div>`).join("");
+}
+
+async function refresh() {
+  const [agents, tasks, messages, logs, benchmarks] = await Promise.all([
+    fetch("/api/agents").then((r) => r.json()),
+    fetch("/api/tasks").then((r) => r.json()),
+    fetch("/api/messages").then((r) => r.json()),
+    fetch("/api/logs").then((r) => r.json()),
+    fetch("/api/benchmarks").then((r) => r.json()),
+  ]);
+
+  state.agents = agents.agents || [];
+  state.tasks = tasks.tasks || [];
+  state.messages = messages.messages || [];
+  state.logs = logs.logs || [];
+  state.benchmarks = benchmarks.benchmarks || [];
+
+  renderAgents();
+  renderMessages();
+  renderTasks();
+  renderLogs();
+  renderEvents();
+}
+
+el.sendButton.addEventListener("click", async () => {
+  const value = el.commandInput.value.trim();
+  if (!value) return;
+  const response = await fetch("/api/demo/start", { method: "POST" });
+  const data = await response.json();
+  el.commandInput.value = "";
+  const event = document.createElement("div");
+  event.textContent = `Moderator: ${value} -> ${data.status}`;
+  el.eventLog.prepend(event);
+  await refresh();
+});
+
+refresh();
+setInterval(refresh, 5000);

@@ -1,0 +1,17 @@
+from typing import Any, Dict, List
+
+from backend.providers.base import BaseProvider
+
+
+class MockProvider(BaseProvider):
+    def generate(self, messages, tools=None, **kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "The provider is not configured. Set NVIDIA_API_KEY and NVIDIA_MODEL to enable AI generation.",
+                    }
+                }
+            ]
+        }

@@ -1,0 +1,12 @@
+# .gitignore
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+logs/*.jsonl
+logs/*.json
+benchmarks/*.json

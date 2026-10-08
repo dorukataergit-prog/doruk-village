@@ -1,0 +1,251 @@
+import json
+import os
+import subprocess
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from backend.config import ROOT, LOGS_DIR, WORKSPACE_DIR, TASKS_DIR, BENCHMARKS_DIR, AGENTS_DIR
+from backend.security import CommandPolicy, SafePathPolicy, SecretGuard
+
+
+class ToolLogger:
+    def __init__(self):
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        self.log_path = LOGS_DIR / "tool_calls.jsonl"
+
+    def log(self, agent: str, tool: str, arguments: Dict[str, Any], result: Any, duration: float, success: bool):
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": agent,
+            "tool": tool,
+            "arguments": arguments,
+            "result": result,
+            "duration": round(duration, 4),
+            "success": success,
+        }
+        with self.log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def read_file(path: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        resolved = SafePathPolicy.validate(path)
+        content = resolved.read_text(encoding="utf-8")
+        logger.log(agent, "read_file", {"path": path}, {"bytes": len(content)}, time.time() - start, True)
+        return content
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "read_file", {"path": path}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def write_file(path: str, content: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        resolved = SafePathPolicy.validate(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        logger.log(agent, "write_file", {"path": path, "bytes": len(content)}, {"written": True}, time.time() - start, True)
+        return str(resolved)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "write_file", {"path": path}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def edit_file(path: str, old_text: str, new_text: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        resolved = SafePathPolicy.validate(path)
+        original = resolved.read_text(encoding="utf-8")
+        if old_text not in original:
+            raise ValueError(f"old_text not found in {path}")
+        updated = original.replace(old_text, new_text, 1)
+        resolved.write_text(updated, encoding="utf-8")
+        logger.log(agent, "edit_file", {"path": path, "old_text": old_text[:80], "new_text": new_text[:80]}, {"updated": True}, time.time() - start, True)
+        return str(resolved)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "edit_file", {"path": path}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def list_files(path: str = ".", agent: str = "system") -> List[str]:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        base = SafePathPolicy.validate(path)
+        items = sorted([str(p.relative_to(base.parent if str(base).endswith(".") else base)) for p in base.iterdir()]) if base.exists() else []
+        logger.log(agent, "list_files", {"path": path}, {"items": items}, time.time() - start, True)
+        return items
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "list_files", {"path": path}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def create_directory(path: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        resolved = SafePathPolicy.validate(path)
+        resolved.mkdir(parents=True, exist_ok=True)
+        logger.log(agent, "create_directory", {"path": path}, {"created": True}, time.time() - start, True)
+        return str(resolved)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "create_directory", {"path": path}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def run_command(command: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        CommandPolicy.validate(command)
+        completed = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+        result = {"returncode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
+        logger.log(agent, "run_command", {"command": command}, result, time.time() - start, completed.returncode == 0)
+        return json.dumps(result)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "run_command", {"command": command}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def run_godot(args: List[str], agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        if not args:
+            raise ValueError("No Godot args provided")
+        proc = subprocess.run(["godot", *args], capture_output=True, text=True, timeout=180, cwd=str(ROOT))
+        result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+        logger.log(agent, "run_godot", {"args": args}, result, time.time() - start, proc.returncode == 0)
+        return json.dumps(result)
+    except FileNotFoundError:
+        err = {"returncode": 127, "stdout": "", "stderr": "Godot binary not installed or not on PATH."}
+        logger.log(agent, "run_godot", {"args": args}, err, time.time() - start, False)
+        return json.dumps(err)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "run_godot", {"args": args}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def get_process_output(process_id: int, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        proc = subprocess.run(["ps", "-p", str(process_id), "-o", "pid=,ppid=,comm=,state=,time=,cmd="], capture_output=True, text=True, timeout=30)
+        result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+        logger.log(agent, "get_process_output", {"process_id": process_id}, result, time.time() - start, proc.returncode == 0)
+        return json.dumps(result)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "get_process_output", {"process_id": process_id}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def git_status(agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        proc = subprocess.run(["git", "-C", str(ROOT), "status", "--short"], capture_output=True, text=True, timeout=30)
+        result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+        logger.log(agent, "git_status", {}, result, time.time() - start, proc.returncode == 0)
+        return json.dumps(result)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "git_status", {}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def git_diff(agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        proc = subprocess.run(["git", "-C", str(ROOT), "diff", "--", "."], capture_output=True, text=True, timeout=30)
+        result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+        logger.log(agent, "git_diff", {}, result, time.time() - start, proc.returncode == 0)
+        return json.dumps(result)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "git_diff", {}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def git_commit(message: str, agent: str = "system") -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        subprocess.run(["git", "-C", str(ROOT), "add", "."], check=True, capture_output=True, text=True, timeout=60)
+        commit = subprocess.run(["git", "-C", str(ROOT), "commit", "-m", message], capture_output=True, text=True, timeout=60)
+        result = {"returncode": commit.returncode, "stdout": commit.stdout, "stderr": commit.stderr}
+        logger.log(agent, "git_commit", {"message": message}, result, time.time() - start, commit.returncode == 0)
+        return json.dumps(result)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "git_commit", {"message": message}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def send_message(agent: str, message: str) -> Dict[str, str]:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        bus_path = LOGS_DIR / "messages.jsonl"
+        payload = {"timestamp": datetime.now(timezone.utc).isoformat(), "agent": agent, "message": message}
+        with bus_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        logger.log(agent, "send_message", {"agent": agent, "message": message}, payload, time.time() - start, True)
+        return payload
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "send_message", {"agent": agent, "message": message}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def read_agent_memory(agent: str) -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        memory_path = AGENTS_DIR / agent / "memory.md"
+        if not memory_path.exists():
+            return ""
+        content = memory_path.read_text(encoding="utf-8")
+        logger.log(agent, "read_agent_memory", {"agent": agent}, {"bytes": len(content)}, time.time() - start, True)
+        return content
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "read_agent_memory", {"agent": agent}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def write_agent_memory(agent: str, content: str) -> str:
+    start = time.time()
+    logger = ToolLogger()
+    try:
+        path = AGENTS_DIR / agent
+        path.mkdir(parents=True, exist_ok=True)
+        memory_path = path / "memory.md"
+        memory_path.write_text(content, encoding="utf-8")
+        logger.log(agent, "write_agent_memory", {"agent": agent, "bytes": len(content)}, {"written": True}, time.time() - start, True)
+        return str(memory_path)
+    except Exception as exc:  # pragma: no cover
+        logger.log(agent, "write_agent_memory", {"agent": agent}, {"error": str(exc)}, time.time() - start, False)
+        raise
+
+
+def get_env_value(name: str) -> Optional[str]:
+    return SecretGuard.read_environment(name)
+
+
+def list_agent_directories() -> List[str]:
+    items = []
+    for child in AGENTS_DIR.iterdir():
+        if child.is_dir():
+            items.append(child.name)
+    return sorted(items)
+
+
+def ensure_task_store() -> Path:
+    TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    BENCHMARKS_DIR.mkdir(parents=True, exist_ok=True)
+    tasks_path = TASKS_DIR / "tasks.json"
+    if not tasks_path.exists():
+        tasks_path.write_text("[]", encoding="utf-8")
+    return tasks_path

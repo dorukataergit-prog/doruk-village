@@ -1,0 +1,174 @@
+from pathlib import Path
+import json
+
+from backend.config import ROOT, WORKSPACE_DIR
+from backend.tools import write_file, create_directory
+
+
+def create_demo_project():
+    game_dir = WORKSPACE_DIR / "game"
+    create_directory(str(game_dir), "director")
+
+    project_files = {
+        "project.godot": '''; Engine configuration file.
+; It's best edited using the editor if you plan to edit the project.
+
+config_version=5
+
+[application]
+config/name="Doruk Car Football"
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.2")
+config/icon="res://icon.svg"
+
+[rendering]
+renderer/rendering_method="forward_plus"
+renderer/rendering_method.mobile="forward_plus"
+''',
+        "icon.svg": '''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#0b1120"/>
+  <circle cx="128" cy="128" r="92" fill="#22c55e"/>
+  <path d="M64 128h128M128 64v128" stroke="#f8fafc" stroke-width="12" stroke-linecap="round"/>
+</svg>
+''',
+        "scenes/Main.tscn": '''[gd_scene load_steps=3 format=3 uid="uid://d0sl7p4xw5gk3"]
+
+[ext_resource type="Script" path="res://scripts/Main.gd" id="1_0gq1n"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_0gq1n")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.766044, 0.642788, 0, -0.642788, 0.766044, 0, 12, 18)
+current = true
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.5, 0, 0.5, 0.866025, 0, 0, 0, 1, 0, 12, 0)
+shadow_enabled = true
+''',
+        "scripts/Main.gd": '''extends Node3D
+
+var car_scene = preload("res://scenes/Car.tscn")
+var football_scene = preload("res://scenes/Ball.tscn")
+var cars = []
+
+func _ready() -> void:
+    create_field()
+    spawn_cars()
+    spawn_ball()
+
+func create_field() -> void:
+    var plane = MeshInstance3D.new()
+    plane.mesh = PlaneMesh.new()
+    plane.mesh.size = Vector2(40, 24)
+    plane.material_override = StandardMaterial3D.new()
+    plane.material_override.albedo_color = Color(0.13, 0.58, 0.18)
+    add_child(plane)
+
+    var wall_material = StandardMaterial3D.new()
+    wall_material.albedo_color = Color(0.9, 0.9, 0.9)
+    for i in range(4):
+        var wall = StaticBody3D.new()
+        var box = CollisionShape3D.new()
+        box.shape = BoxShape3D.new()
+        box.shape.extents = Vector3(20, 1, 0.5)
+        wall.add_child(box)
+        var mesh = MeshInstance3D.new()
+        mesh.mesh = BoxMesh.new()
+        mesh.mesh.size = Vector3(40, 2, 1)
+        mesh.material_override = wall_material
+        wall.add_child(mesh)
+        add_child(wall)
+        if i == 0:
+            wall.position = Vector3(0, 1, -12)
+        elif i == 1:
+            wall.position = Vector3(0, 1, 12)
+        elif i == 2:
+            wall.position = Vector3(-20, 1, 0)
+            wall.rotation_degrees.y = 90
+        else:
+            wall.position = Vector3(20, 1, 0)
+            wall.rotation_degrees.y = 90
+
+func spawn_cars() -> void:
+    for i in range(2):
+        var instance = car_scene.instantiate()
+        instance.name = "Car%02d" % i
+        instance.position = Vector3(-7 + i * 14, 1, 0)
+        add_child(instance)
+        cars.append(instance)
+
+func spawn_ball() -> void:
+    var ball = football_scene.instantiate()
+    ball.position = Vector3(0, 1.5, 0)
+    add_child(ball)
+''',
+        "scenes/Car.tscn": '''[gd_scene load_steps=3 format=3 uid="uid://ca24r8fbsu6v2"]
+
+[ext_resource type="Script" path="res://scripts/Car.gd" id="1_2a0l8"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_8oe6b"]
+size = Vector3(2, 0.8, 3)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_qk7n0"]
+height = 0.4
+top_radius = 0.4
+bottom_radius = 0.4
+
+[node name="Car" type="Node3D"]
+script = ExtResource("1_2a0l8")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_8oe6b")
+
+[node name="WheelFrontLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, -0.8, -0.5, 1)
+mesh = SubResource("CylinderMesh_qk7n0")
+
+[node name="WheelFrontRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0.8, -0.5, 1)
+mesh = SubResource("CylinderMesh_qk7n0")
+
+[node name="WheelRearLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, -0.8, -0.5, -1)
+mesh = SubResource("CylinderMesh_qk7n0")
+
+[node name="WheelRearRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0.8, -0.5, -1)
+mesh = SubResource("CylinderMesh_qk7n0")
+''',
+        "scripts/Car.gd": '''extends Node3D
+
+var speed := 10.0
+var turn_speed := 1.6
+
+func _process(delta: float) -> void:
+    var input_x := Input.get_axis("ui_left", "ui_right")
+    var input_y := Input.get_axis("ui_up", "ui_down")
+
+    if input_x != 0.0:
+        rotation.y += input_x * turn_speed * delta
+    if input_y != 0.0:
+        position += -transform.basis.z * input_y * speed * delta
+''',
+        "scenes/Ball.tscn": '''[gd_scene load_steps=2 format=3 uid="uid://bo2i9k7yr81l1"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_4j168"]
+radius = 0.5
+height = 1.0
+
+[node name="Ball" type="Node3D"]
+
+[node name="BallMesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_4j168")
+''',
+    }
+
+    for relative_path, content in project_files.items():
+        write_file(str(game_dir / relative_path), content, "director")
+
+    return {"status": "created", "path": str(game_dir)}
+
+
+if __name__ == "__main__":
+    print(json.dumps(create_demo_project(), indent=2))
